@@ -1,5 +1,9 @@
+import pytest
+
 from autogluon.common import space
 from autogluon.core.searcher import LocalGridSearcher
+from autogluon.core.searcher.exceptions import ExhaustedSearchSpaceError
+from autogluon.core.searcher.searcher_factory import searcher_factory
 
 
 def test_local_grid_searcher_categorical():
@@ -50,12 +54,25 @@ def test_local_grid_searcher_categorical():
 
     assert len(searcher._results) == 2
 
-    try:
+    with pytest.raises(ExhaustedSearchSpaceError):
         searcher.get_config()
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError("GridSearcher should error due to being out of configs")
+
+
+def test_local_grid_searcher_static_params():
+    searcher = LocalGridSearcher(search_space={"a": space.Int(0, 1), "fixed": 42})
+
+    configs = []
+    while len(searcher) > 0:
+        config = searcher.get_config()
+        configs.append(config)
+        searcher.update(config, reward=0.1)
+        assert searcher.get_reward(config) == 0.1
+
+    assert configs == [{"a": 0, "fixed": 42}, {"a": 1, "fixed": 42}]
+    assert searcher._params_static == {"fixed": 42}
+    assert len(searcher) == 0
+    with pytest.raises(ExhaustedSearchSpaceError):
+        searcher.get_config()
 
 
 def test_local_grid_searcher_numeric():
@@ -63,7 +80,10 @@ def test_local_grid_searcher_numeric():
         [dict(a=space.Bool()), [{"a": 0}, {"a": 1}]],
         [dict(a=space.Int(12, 15)), [{"a": 12}, {"a": 13}, {"a": 14}, {"a": 15}]],
         [dict(a=space.Real(12, 16)), [{"a": 12.0}, {"a": 13.333333333333334}, {"a": 14.666666666666666}, {"a": 16.0}]],
-        [dict(a=space.Real(12, 16, log=True)), [{"a": 12.0}, {"a": 13.207708995578509}, {"a": 14.536964742657117}, {"a": 16.0}]],
+        [
+            dict(a=space.Real(12, 16, log=True)),
+            [{"a": 12.0}, {"a": 13.207708995578509}, {"a": 14.536964742657117}, {"a": 16.0}],
+        ],
     ]
     for search_space, expected_values in search_spaces:
         searcher = LocalGridSearcher(search_space=search_space)
@@ -73,7 +93,7 @@ def test_local_grid_searcher_numeric():
                 cfg = searcher.get_config()
                 actual_values.append(cfg)
                 searcher.update(cfg, reward=0.1)
-            except AssertionError as e:
+            except ExhaustedSearchSpaceError:
                 assert expected_values == actual_values
                 break
 
@@ -91,13 +111,23 @@ def test_local_grid_searcher_numeric_grid_settings():
     }
 
     for search_space, expected_values in search_spaces:
-        searcher = LocalGridSearcher(search_space=search_space, grid_numeric_spaces_points_number=2, grid_num_sample_settings=grid_num_sample_settings)
+        searcher = LocalGridSearcher(
+            search_space=search_space,
+            grid_numeric_spaces_points_number=2,
+            grid_num_sample_settings=grid_num_sample_settings,
+        )
         actual_values = []
         while True:
             try:
                 cfg = searcher.get_config()
                 actual_values.append(cfg)
                 searcher.update(cfg, reward=0.1)
-            except AssertionError as e:
+            except ExhaustedSearchSpaceError:
                 assert expected_values == actual_values
                 break
+
+
+@pytest.mark.parametrize("searcher_name", ["grid", "local_grid"])
+def test_searcher_factory_grid(searcher_name):
+    searcher = searcher_factory(searcher_name, search_space={"a": space.Int(0, 1)})
+    assert isinstance(searcher, LocalGridSearcher)

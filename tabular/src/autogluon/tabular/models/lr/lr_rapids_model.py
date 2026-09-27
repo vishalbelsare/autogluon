@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import logging
 
 from autogluon.common.utils.try_import import try_import_rapids_cuml
 from autogluon.core.constants import REGRESSION
 
 from .._utils.rapids_utils import RapidsModelMixin
-from .hyperparameters.parameters import get_param_baseline
+from .hyperparameters.parameters import get_param_baseline, get_penalty
 from .lr_model import LinearModel
 
 logger = logging.getLogger(__name__)
@@ -24,17 +26,12 @@ class LinearRapidsModel(RapidsModelMixin, LinearModel):
     """
 
     def _get_model_type(self):
-        penalty = self.params.get("penalty", "L2")
+        penalty = get_penalty(self.params)
         try_import_rapids_cuml()
         from cuml.linear_model import Lasso, LogisticRegression, Ridge
 
         if self.problem_type == REGRESSION:
-            if penalty == "L2":
-                model_type = Ridge
-            elif penalty == "L1":
-                model_type = Lasso
-            else:
-                raise AssertionError(f'Unknown value for penalty "{penalty}" - supported types are ["L1", "L2"]')
+            model_type = Lasso if penalty == "L1" else Ridge
         else:
             model_type = LogisticRegression
         return model_type
@@ -49,7 +46,7 @@ class LinearRapidsModel(RapidsModelMixin, LinearModel):
 
     def _preprocess(self, X, **kwargs):
         X = super()._preprocess(X=X, **kwargs)
-        if hasattr(X, 'toarray'):  # Check if it's a sparse matrix
+        if hasattr(X, "toarray"):  # Check if it's a sparse matrix
             X = X.toarray()
         return X
 
@@ -59,8 +56,8 @@ class LinearRapidsModel(RapidsModelMixin, LinearModel):
         and bypasses sklearn-specific incremental training approach.
         """
         # Preprocess data
-        X = self.preprocess(X, is_train=True)
-        if self.problem_type == 'binary':
+        X = self.preprocess(X, y=y, is_train=True)
+        if self.problem_type == "binary":
             y = y.astype(int).values
 
         # Create cuML model with filtered parameters
@@ -69,28 +66,38 @@ class LinearRapidsModel(RapidsModelMixin, LinearModel):
         # Comprehensive parameter filtering for cuML compatibility
         cuml_incompatible_params = {
             # AutoGluon-specific preprocessing parameters
-            'vectorizer_dict_size', 'proc.ngram_range', 'proc.skew_threshold',
-            'proc.impute_strategy', 'handle_text',
+            "vectorizer_dict_size",
+            "proc.ngram_range",
+            "proc.skew_threshold",
+            "proc.impute_strategy",
+            "handle_text",
             # sklearn-specific parameters not supported by cuML
-            'n_jobs', 'warm_start', 'multi_class', 'dual', 'intercept_scaling',
-            'class_weight', 'random_state', 'verbose',
+            "n_jobs",
+            "warm_start",
+            "multi_class",
+            "dual",
+            "intercept_scaling",
+            "class_weight",
+            "random_state",
+            "verbose",
             # Parameters that need conversion or special handling
-            'penalty', 'C'
+            "penalty",
+            "C",
         }
 
         # Filter out incompatible parameters
-        filtered_params = {k: v for k, v in self.params.items()
-                          if k not in cuml_incompatible_params}
+        filtered_params = {k: v for k, v in self.params.items() if k not in cuml_incompatible_params}
 
         # Handle parameter conversions for cuML
         if self.problem_type == REGRESSION:
             # Convert sklearn's C parameter to cuML's alpha
-            if 'C' in self.params:
-                filtered_params['alpha'] = 1.0 / self.params['C']
+            if "C" in self.params:
+                filtered_params["alpha"] = 1.0 / self.params["C"]
         else:
+            filtered_params["penalty"] = get_penalty(self.params).lower()
             # For classification, keep C parameter
-            if 'C' in self.params:
-                filtered_params['C'] = self.params['C']
+            if "C" in self.params:
+                filtered_params["C"] = self.params["C"]
 
         # Create and fit cuML model - let cuML handle its own error messages
         self.model = model_cls(**filtered_params)

@@ -61,7 +61,7 @@ on:
       fork_info:
         description: 'Get the forked PR repository name and branch, e.g. username/autogluon|test_branch'
         required: true
-      
+
 permissions:
   id-token: write
   contents: read
@@ -86,7 +86,7 @@ jobs:
             [Benchmark Output][1]
 
             [1]: ${{ steps.vars.outputs.run-url }}
-  
+
   generate_amlb_user_dir:
     needs: setup
     runs-on: ubuntu-latest
@@ -110,8 +110,14 @@ jobs:
           echo "FORK_NAME=$fork_name" >> $GITHUB_OUTPUT
           echo "FORK_BRANCH=$fork_branch" >> $GITHUB_OUTPUT
       - name: Generate AMLB User Dir - {{ github.event.inputs.module }}
+        env:
+          MODULE: ${{ github.event.inputs.module }}
+          FORK_NAME: ${{ steps.parse_fork_info.outputs.FORK_NAME }}
+          FORK_BRANCH: ${{ steps.parse_fork_info.outputs.FORK_BRANCH }}
+          COMMIT_SHA: ${{ github.sha }}
+          FOLDS: ${{ github.event.inputs.folds }}
         run: |
-          /bin/bash CI/bench/generate_amlb_user_dir.sh ${{ github.event.inputs.module }} ${{ steps.parse_fork_info.outputs.FORK_NAME }} ${{ steps.parse_fork_info.outputs.FORK_BRANCH }} ${{ github.sha }} "" ${{ github.event.inputs.folds }}
+          /bin/bash CI/bench/generate_amlb_user_dir.sh "$MODULE" "$FORK_NAME" "$FORK_BRANCH" "$COMMIT_SHA" "" "$FOLDS"
 
   benchmark:
     needs: generate_amlb_user_dir
@@ -142,7 +148,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
       - name: Setup npm
         uses: actions/setup-node@v4
         with:
@@ -163,10 +169,17 @@ jobs:
           echo "FORK_BRANCH=$fork_branch" >> $GITHUB_OUTPUT
       - name: Run benchmark
         shell: bash -l {0}
+        env:
+          MODULE: ${{ github.event.inputs.module }}
+          PRESET: ${{ github.event.inputs.preset }}
+          BENCHMARK: ${{ github.event.inputs.benchmark }}
+          TIME_LIMIT: ${{ github.event.inputs.time_limit }}
+          FORK_BRANCH: ${{ steps.parse_fork_info.outputs.FORK_BRANCH }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           nvm install 20
           npm install -g aws-cdk
-          /bin/bash ./.github/workflow_scripts/run_benchmark.sh ${{ github.event.inputs.module }} ${{ github.event.inputs.preset }} ${{ github.event.inputs.benchmark }} ${{ github.event.inputs.time_limit }} ${{ steps.parse_fork_info.outputs.FORK_BRANCH }} ${{ github.sha }}
+          /bin/bash ./.github/workflow_scripts/run_benchmark.sh "$MODULE" "$PRESET" "$BENCHMARK" "$TIME_LIMIT" "$FORK_BRANCH" "$COMMIT_SHA"
       - name: Upload website.txt
         uses: actions/upload-artifact@v4
         with:
@@ -176,9 +189,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results
-          path: ./final_eval.txt       
-  
-  dashboard: 
+          path: ./final_eval.txt
+
+  dashboard:
     needs: benchmark
     runs-on: ubuntu-latest
     defaults:

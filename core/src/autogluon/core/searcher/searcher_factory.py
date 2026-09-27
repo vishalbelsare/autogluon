@@ -8,6 +8,7 @@ SEARCHER_CONFIGS = dict(
     local_grid=dict(
         searcher_cls=LocalGridSearcher,
     ),
+    grid=dict(searcher_cls=LocalGridSearcher),
     # Fall back to random search since Bayes searcher is not supported
     bayes=dict(searcher_cls=LocalRandomSearcher),
 )
@@ -59,7 +60,9 @@ def searcher_factory(searcher_name, **kwargs):
         if "supported_schedulers" in searcher_config:
             supported_schedulers = searcher_config["supported_schedulers"]
             assert scheduler is not None, "Scheduler must set search_options['scheduler']"
-            assert scheduler in supported_schedulers, f"Searcher '{searcher_name}' only works with schedulers {supported_schedulers} (not with '{scheduler}')"
+            assert scheduler in supported_schedulers, (
+                f"Searcher '{searcher_name}' only works with schedulers {supported_schedulers} (not with '{scheduler}')"
+            )
 
         searcher = searcher_cls(**kwargs)
         return searcher

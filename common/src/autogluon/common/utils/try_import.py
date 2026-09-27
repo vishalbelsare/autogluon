@@ -18,7 +18,6 @@ __all__ = [
     "try_import_autogluon_multimodal",
     "try_import_rapids_cuml",
     "try_import_imodels",
-    "try_import_fasttext",
 ]
 
 logger = logging.getLogger(__name__)
@@ -32,13 +31,13 @@ def try_import_mxboard():
 
 
 def try_import_ray() -> ModuleType:
-    RAY_MAX_VERSION = "2.49.0"  # sync with core/setup.py
+    RAY_MAX_VERSION = "2.59.0"  # sync with core/setup.py
     ray_max_version_os_map = dict(
         Darwin=RAY_MAX_VERSION,
         Windows=RAY_MAX_VERSION,
         Linux=RAY_MAX_VERSION,
     )
-    ray_min_version = "2.10.0"
+    ray_min_version = "2.43.0"
     current_os = platform.system()
     ray_max_version = ray_max_version_os_map.get(current_os, RAY_MAX_VERSION)
     strict_ray_version = os.environ.get("AG_LOOSE_RAY_VERSION", "False") != "True"
@@ -161,7 +160,7 @@ def try_import_torch():
         raise ImportError(
             "Unable to import dependency torch\n"
             "A quick tip is to install via `pip install torch`.\n"
-            "The minimum torch version is currently 2.6."  # sync with core/_setup_utils.py
+            "The minimum torch version is currently 2.10."  # sync with core/_setup_utils.py
         )
 
 
@@ -193,12 +192,3 @@ def try_import_imodels():
         import imodels
     except ImportError:
         raise ImportError("Unable to import dependency imodels. A quick tip is to install via `pip install imodels`. ")
-
-
-def try_import_fasttext():
-    try:
-        import fasttext
-
-        _ = fasttext.__file__
-    except Exception:
-        raise ImportError('Import fasttext failed. Please run "pip install fasttext"')

@@ -8,6 +8,8 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import sklearn
+from packaging.version import parse as parse_version
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.impute import SimpleImputer
@@ -21,7 +23,15 @@ from autogluon.core.constants import BINARY, REGRESSION
 from autogluon.core.models import AbstractModel
 from autogluon.core.utils.exceptions import TimeLimitExceeded
 
-from .hyperparameters.parameters import IGNORE, INCLUDE, ONLY, _get_solver, get_param_baseline, preprocess_params_set
+from .hyperparameters.parameters import (
+    IGNORE,
+    INCLUDE,
+    ONLY,
+    _get_solver,
+    get_param_baseline,
+    get_penalty,
+    preprocess_params_set,
+)
 from .hyperparameters.searchspaces import get_default_searchspace
 from .lr_preprocessing_utils import NlpDataPreprocessor, OheFeaturesGenerator
 
@@ -40,9 +50,17 @@ class LinearModel(AbstractModel):
 
         'regression': https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html#sklearn.linear_model.Ridge
     """
+
     ag_key = "LR"
     ag_name = "LinearModel"
     ag_priority = 30
+    seed_name = "random_state"
+    _supported_problem_types = ["binary", "multiclass", "regression"]
+
+    _default_auxiliary_params_extra = dict(
+        valid_raw_types=[R_BOOL, R_INT, R_FLOAT, R_CATEGORY],
+        ignored_type_group_special=[S_TEXT_AS_CATEGORY],
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -50,7 +68,7 @@ class LinearModel(AbstractModel):
 
     # noinspection PyUnresolvedReferences
     def _get_model_type(self):
-        penalty = self.params.get("penalty", "L2")
+        penalty = get_penalty(self.params)
         # FIXME: False by default because AdultIncome dataset shows worse results with use_daal=True.
         #  Version: scikit-learn-intelex-2024.4.0
         #                     model  score_test  score_val eval_metric
@@ -64,17 +82,12 @@ class LinearModel(AbstractModel):
                 fix_sklearnex_logging_if_kaggle()  # Fix logging verbosity if in Kaggle notebook environment
 
                 logger.log(15, "\tUsing sklearnex LR backend...")
-            except:
+            except Exception:
                 from sklearn.linear_model import Lasso, LogisticRegression, Ridge
         else:
             from sklearn.linear_model import Lasso, LogisticRegression, Ridge
         if self.problem_type == REGRESSION:
-            if penalty == "L2":
-                model_type = Ridge
-            elif penalty == "L1":
-                model_type = Lasso
-            else:
-                raise AssertionError(f'Unknown value for penalty "{penalty}" - supported types are ["L1", "L2"]')
+            model_type = Lasso if penalty == "L1" else Ridge
         else:
             model_type = LogisticRegression
         return model_type
@@ -86,7 +99,9 @@ class LinearModel(AbstractModel):
         """Returns dict with keys: : 'continuous', 'skewed', 'onehot', 'embed', 'language', values = ordered list of feature-names falling into each category.
         Each value is a list of feature-names corresponding to columns in original dataframe.
         """
-        continuous_featnames = self._feature_metadata.get_features(valid_raw_types=[R_INT, R_FLOAT], invalid_special_types=[S_BOOL])
+        continuous_featnames = self._feature_metadata.get_features(
+            valid_raw_types=[R_INT, R_FLOAT], invalid_special_types=[S_BOOL]
+        )
         categorical_featnames = self._feature_metadata.get_features(valid_raw_types=[R_CATEGORY, R_OBJECT])
         bool_featnames = self._feature_metadata.get_features(required_special_types=[S_BOOL])
         language_featnames = []  # TODO: Disabled currently, have to pass raw text data features here to function properly
@@ -124,7 +139,10 @@ class LinearModel(AbstractModel):
                     (
                         "vectorizer",
                         TfidfVectorizer(
-                            ngram_range=self.params["proc.ngram_range"], sublinear_tf=True, max_features=vect_max_features, tokenizer=self._tokenize
+                            ngram_range=self.params["proc.ngram_range"],
+                            sublinear_tf=True,
+                            max_features=vect_max_features,
+                            tokenizer=self._tokenize,
                         ),
                     ),
                 ]
@@ -138,7 +156,12 @@ class LinearModel(AbstractModel):
             )
             transformer_list.append(("cats", pipeline, feature_types["onehot"]))
         if feature_types.get("continuous", None):
-            pipeline = Pipeline(steps=[("imputer", SimpleImputer(strategy=self.params["proc.impute_strategy"])), ("scaler", StandardScaler())])
+            pipeline = Pipeline(
+                steps=[
+                    ("imputer", SimpleImputer(strategy=self.params["proc.impute_strategy"])),
+                    ("scaler", StandardScaler()),
+                ]
+            )
             transformer_list.append(("cont", pipeline, feature_types["continuous"]))
         if feature_types.get("bool", None):
             pipeline = Pipeline(steps=[("scaler", StandardScaler())])
@@ -147,7 +170,10 @@ class LinearModel(AbstractModel):
             pipeline = Pipeline(
                 steps=[
                     ("imputer", SimpleImputer(strategy=self.params["proc.impute_strategy"])),
-                    ("quantile", QuantileTransformer(output_distribution="normal")),  # Or output_distribution = 'uniform'
+                    (
+                        "quantile",
+                        QuantileTransformer(output_distribution="normal"),
+                    ),  # Or output_distribution = 'uniform'
                 ]
             )
             transformer_list.append(("skew", pipeline, feature_types["skewed"]))
@@ -157,24 +183,30 @@ class LinearModel(AbstractModel):
     def _set_default_params(self):
         default_params = {"fit_intercept": True}
         if self.problem_type != REGRESSION:
-            default_params.update({"solver": _get_solver(self.problem_type)})
+            default_params.update(
+                {"solver": _get_solver(self.problem_type, penalty=self._user_params.get("penalty", "L2"))}
+            )
         default_params.update(get_param_baseline())
         for param, val in default_params.items():
             self._set_default_param_value(param, val)
-
-    def _get_random_seed_from_hyperparameters(self, hyperparameters: dict) -> int | None | str:
-        return hyperparameters.get("random_seed", "N/A")
 
     def _get_default_searchspace(self):
         return get_default_searchspace(self.problem_type)
 
     def _fit(self, X, y, time_limit=None, num_cpus=-1, sample_weight=None, **kwargs):
         time_fit_start = time.time()
-        X = self.preprocess(X, is_train=True)
+        X = self.preprocess(X, y=y, is_train=True)
         if self.problem_type == BINARY:
             y = y.astype(int).values
 
         params = {k: v for k, v in self.params.items() if k not in preprocess_params_set}
+        if self.problem_type != REGRESSION:
+            penalty = get_penalty(self.params)
+            if parse_version(sklearn.__version__).release >= (1, 8):
+                # sklearn 1.8 replaced penalty with l1_ratio for logistic regression.
+                params["l1_ratio"] = 1.0 if penalty == "L1" else 0.0
+            else:
+                params["penalty"] = penalty.lower()
         if "n_jobs" not in params:
             if self.problem_type != REGRESSION:
                 params["n_jobs"] = num_cpus
@@ -218,7 +250,7 @@ class LinearModel(AbstractModel):
         total_iter = 0
         total_iter_used = 0
         total_max_iter = sum(max_iter_list)
-        model = model_cls(max_iter=max_iter_list[0], random_state=self.random_seed, **params)
+        model = model_cls(max_iter=max_iter_list[0], **params)
         early_stop = False
         for i, cur_max_iter in enumerate(max_iter_list):
             if time_left is not None and (i > 0):
@@ -229,7 +261,9 @@ class LinearModel(AbstractModel):
                 if time_to_train_cur_max_iter > time_left_train:
                     cur_max_iter = min(int(time_left_train / time_per_iter) - 1, cur_max_iter)
                     if cur_max_iter <= 0:
-                        logger.warning(f"\tEarly stopping due to lack of time remaining. Fit {total_iter}/{total_max_iter} iters...")
+                        logger.warning(
+                            f"\tEarly stopping due to lack of time remaining. Fit {total_iter}/{total_max_iter} iters..."
+                        )
                         break
                     early_stop = True
 
@@ -247,19 +281,23 @@ class LinearModel(AbstractModel):
                     try:
                         # FIXME: For some reason this crashes on regression with some versions of scikit-learn.
                         total_iter_used += model.n_iter_[0]
-                    except:
+                    except Exception:
                         pass
             else:
                 total_iter_used += model.max_iter
             if early_stop:
                 if total_iter_used == total_iter:  # Not yet converged
-                    logger.warning(f"\tEarly stopping due to lack of time remaining. Fit {total_iter}/{total_max_iter} iters...")
+                    logger.warning(
+                        f"\tEarly stopping due to lack of time remaining. Fit {total_iter}/{total_max_iter} iters..."
+                    )
                 break
 
         self.model = model
         self.params_trained["max_iter"] = total_iter
 
-    def _select_features_handle_text_include(self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames):
+    def _select_features_handle_text_include(
+        self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames
+    ):
         types_of_features = dict()
         types_of_features.update(self._select_continuous(df, continuous_featnames))
         types_of_features.update(self._select_bool(df, bool_featnames))
@@ -267,12 +305,16 @@ class LinearModel(AbstractModel):
         types_of_features.update(self._select_text(df, language_featnames))
         return types_of_features
 
-    def _select_features_handle_text_only(self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames):
+    def _select_features_handle_text_only(
+        self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames
+    ):
         types_of_features = dict()
         types_of_features.update(self._select_text(df, language_featnames))
         return types_of_features
 
-    def _select_features_handle_text_ignore(self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames):
+    def _select_features_handle_text_ignore(
+        self, df, categorical_featnames, language_featnames, continuous_featnames, bool_featnames
+    ):
         types_of_features = dict()
         types_of_features.update(self._select_continuous(df, continuous_featnames))
         types_of_features.update(self._select_bool(df, bool_featnames))
@@ -300,19 +342,6 @@ class LinearModel(AbstractModel):
     def _select_bool(self, df, features):
         return dict(bool=features)
 
-    def _get_default_auxiliary_params(self) -> dict:
-        default_auxiliary_params = super()._get_default_auxiliary_params()
-        extra_auxiliary_params = dict(
-            valid_raw_types=[R_BOOL, R_INT, R_FLOAT, R_CATEGORY],
-            ignored_type_group_special=[S_TEXT_AS_CATEGORY],
-        )
-        default_auxiliary_params.update(extra_auxiliary_params)
-        return default_auxiliary_params
-
-    def _estimate_memory_usage(self, X: pd.DataFrame, **kwargs) -> int:
-        hyperparameters = self._get_model_params()
-        return self.estimate_memory_usage_static(X=X, problem_type=self.problem_type, num_classes=self.num_classes, hyperparameters=hyperparameters, **kwargs)
-
     @classmethod
     def _estimate_memory_usage_static(
         cls,
@@ -320,19 +349,15 @@ class LinearModel(AbstractModel):
         X: pd.DataFrame,
         **kwargs,
     ) -> int:
-        return 4 * get_approximate_df_mem_usage(X).sum()
+        mem_est = 15 * get_approximate_df_mem_usage(X).sum()
+        cat_cols = X.select_dtypes(include=["category", "object"]).columns
+        n_ohe_features = sum(X[col].nunique() for col in cat_cols)
+        mem_est += min(len(X), 100_000) * n_ohe_features
+        return mem_est
 
     def _get_maximum_resources(self) -> dict[str, int | float]:
         # no GPU support
         return {"num_gpus": 0}
-
-    @classmethod
-    def supported_problem_types(cls) -> list[str] | None:
-        return ["binary", "multiclass", "regression"]
-
-    @classmethod
-    def _class_tags(cls):
-        return {"can_estimate_memory_usage_static": True}
 
     def _more_tags(self):
         # `can_refit_full=True` because validation data isn't used during fit.

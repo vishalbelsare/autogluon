@@ -1,62 +1,46 @@
-from typing import Any, Union
+from typing import Any
 
 
-def get_hyperparameter_presets() -> dict[str, dict[str, Union[dict[str, Any], list[dict[str, Any]]]]]:
+def get_hyperparameter_presets() -> dict[str, dict[str, dict[str, Any] | list[dict[str, Any]]]]:
     return {
-        "very_light": {
-            "Naive": {},
-            "SeasonalNaive": {},
-            "ETS": {},
-            "Theta": {},
-            "RecursiveTabular": {"max_num_samples": 100_000},
-            "DirectTabular": {"max_num_samples": 100_000},
-        },
         "light": {
-            "Naive": {},
             "SeasonalNaive": {},
             "ETS": {},
             "Theta": {},
             "RecursiveTabular": {},
             "DirectTabular": {},
-            "TemporalFusionTransformer": {},
-            "Chronos": {"model_path": "bolt_small"},
-        },
-        "light_inference": {
-            "SeasonalNaive": {},
-            "DirectTabular": {},
-            "RecursiveTabular": {},
-            "TemporalFusionTransformer": {},
-            "PatchTST": {},
+            "Chronos2": {"model_path": "autogluon/chronos-2-small"},
+            "Toto2": {"model_path": "Toto-2.0-4m"},
         },
         "default": {
             "SeasonalNaive": {},
             "AutoETS": {},
-            "NPTS": {},
             "DynamicOptimizedTheta": {},
             "RecursiveTabular": {},
             "DirectTabular": {},
             "TemporalFusionTransformer": {},
-            "PatchTST": {},
             "DeepAR": {},
-            "Chronos": [
+            "Chronos2": [
+                {},
                 {
-                    "ag_args": {"name_suffix": "ZeroShot"},
-                    "model_path": "bolt_base",
-                },
-                {
-                    "ag_args": {"name_suffix": "FineTuned"},
-                    "model_path": "bolt_small",
+                    "ag_args": {"name_suffix": "SmallFineTuned"},
+                    "model_path": "autogluon/chronos-2-small",
                     "fine_tune": True,
-                    "target_scaler": "standard",
-                    "covariate_regressor": {"model_name": "CAT", "model_hyperparameters": {"iterations": 1_000}},
+                    "eval_during_fine_tune": True,
                 },
             ],
-            "TiDE": {
-                "encoder_hidden_dim": 256,
-                "decoder_hidden_dim": 256,
-                "temporal_hidden_dim": 64,
-                "num_batches_per_epoch": 100,
-                "lr": 1e-4,
-            },
+            "Toto2": {"model_path": "Toto-2.0-22m"},
+        },
+        "experimental": {
+            "Chronos2": [
+                {},
+                {
+                    "ag_args": {"name_suffix": "SmallFineTuned"},
+                    "model_path": "autogluon/chronos-2-small",
+                    "fine_tune": True,
+                    "eval_during_fine_tune": True,
+                },
+            ],
+            "Toto2": {"model_path": "Toto-2.0-313m"},
         },
     }

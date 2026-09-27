@@ -7,14 +7,17 @@ import pytest
 _HF_HUB_DEPENDENCIES = [
     "autogluon/chronos-t5-tiny",
     "autogluon/chronos-bolt-tiny",
+    "autogluon/chronos-2-small",
+    "Datadog/Toto-Open-Base-1.0",
+    "Datadog/Toto-2.0-4m",
 ]
 
 
 def download_and_cache_hf_hub_dependencies():
-    from transformers import AutoModel
+    from huggingface_hub import snapshot_download
 
     for dependency in _HF_HUB_DEPENDENCIES:
-        _ = AutoModel.from_pretrained(dependency)
+        _ = snapshot_download(dependency)
 
 
 def pytest_addoption(parser):
@@ -65,6 +68,24 @@ def temp_model_path(tmp_path_factory):
     return str(fn)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _ag_default_base_path(tmp_path_factory):
+    """Redirect auto-generated predictor paths into pytest's temporary directory.
+
+    Without this, every `TimeSeriesPredictor(...)` created without an explicit `path` leaves an
+    `AutogluonModels/ag-<timestamp>` directory behind in the working directory. pytest reclaims
+    its own tmp dirs (keeping only the last few sessions), so nothing accumulates in the repo.
+    """
+    base_path = tmp_path_factory.mktemp("ag_models")
+    prev = os.environ.get("AG_DEFAULT_BASE_PATH")
+    os.environ["AG_DEFAULT_BASE_PATH"] = str(base_path)
+    yield str(base_path)
+    if prev is None:
+        os.environ.pop("AG_DEFAULT_BASE_PATH", None)
+    else:
+        os.environ["AG_DEFAULT_BASE_PATH"] = prev
+
+
 @pytest.fixture(scope="module")
 def dummy_hyperparameters():
     """Hyperparameters passed to the models during tests to minimize training time."""
@@ -75,6 +96,32 @@ def dummy_hyperparameters():
         "use_fallback_model": False,
         "model_path": "autogluon/chronos-bolt-tiny",
     }
+
+
+@pytest.fixture(scope="module")
+def df_with_static():
+    from autogluon.timeseries.utils.features import TimeSeriesFeatureGenerator
+
+    from .unittests.common import DATAFRAME_WITH_STATIC
+
+    feature_generator = TimeSeriesFeatureGenerator(target="target", known_covariates_names=[])
+    df = DATAFRAME_WITH_STATIC.copy(deep=False)
+    df = feature_generator.fit_transform(df)
+    return df, feature_generator.covariate_metadata
+
+
+@pytest.fixture(scope="module")
+def df_with_covariates():
+    from autogluon.timeseries.utils.features import TimeSeriesFeatureGenerator
+
+    from .unittests.common import DATAFRAME_WITH_COVARIATES
+
+    # Use last column as past covariate
+    known_covariates_names = [col for col in DATAFRAME_WITH_COVARIATES.columns if col != "target"][:-1]
+    feature_generator = TimeSeriesFeatureGenerator(target="target", known_covariates_names=known_covariates_names)
+    df = DATAFRAME_WITH_COVARIATES.copy(deep=False)
+    df = feature_generator.fit_transform(df)
+    return df, feature_generator.covariate_metadata
 
 
 @pytest.fixture(scope="module")

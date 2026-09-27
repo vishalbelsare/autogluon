@@ -1,5 +1,5 @@
 from .autogluon_tabular import DirectTabularModel, PerStepTabularModel, RecursiveTabularModel
-from .chronos import ChronosModel
+from .chronos import Chronos2Model, ChronosModel
 from .gluonts import (
     DeepARModel,
     DLinearModel,
@@ -29,6 +29,7 @@ from .local import (
 )
 from .registry import ModelRegistry
 from .toto import TotoModel
+from .toto2 import Toto2Model
 
 __all__ = [
     "ADIDAModel",
@@ -45,6 +46,7 @@ __all__ = [
     "ETSModel",
     "IMAPAModel",
     "ChronosModel",
+    "Chronos2Model",
     "ModelRegistry",
     "NPTSModel",
     "NaiveModel",
@@ -58,6 +60,7 @@ __all__ = [
     "ThetaModel",
     "TiDEModel",
     "TotoModel",
+    "Toto2Model",
     "WaveNetModel",
     "ZeroModel",
 ]

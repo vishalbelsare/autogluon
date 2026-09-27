@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
 from autogluon.core.constants import BINARY, MULTICLASS, REGRESSION
 from autogluon.core.models import AbstractModel
 
@@ -38,14 +39,14 @@ class EBMModel(AbstractModel):
     black-box models on a wide range of tabular datasets.
 
     Requires the 'interpret' or 'interpret-core' package. Install via:
-    
+
     pip install interpret
 
 
     Paper: InterpretML: A Unified Framework for Machine Learning Interpretability
-    
+
     Authors: H. Nori, S. Jenkins, P. Koch, and R. Caruana 2019
-    
+
     Codebase: https://github.com/interpretml/interpret
 
     License: MIT
@@ -56,7 +57,13 @@ class EBMModel(AbstractModel):
     ag_key = "EBM"
     ag_name = "EBM"
     ag_priority = 35
-    
+    seed_name = "random_state"
+    _supported_problem_types = ["binary", "multiclass", "regression"]
+
+    _default_auxiliary_params_extra = {
+        "valid_raw_types": ["int", "float", "category"],
+    }
+
     def _fit(
         self,
         X: pd.DataFrame,
@@ -70,7 +77,7 @@ class EBMModel(AbstractModel):
         **kwargs,
     ):
         # Preprocess data.
-        X = self.preprocess(X)
+        X = self.preprocess(X, y=y)
         if X_val is not None:
             X_val = self.preprocess(X_val)
 
@@ -89,7 +96,7 @@ class EBMModel(AbstractModel):
 
         # Init Class
         model_cls = get_class_from_problem_type(self.problem_type)
-        self.model = model_cls(random_state=self.random_seed, **params)
+        self.model = model_cls(**params)
 
         # Handle validation data format for EBM
         fit_X = X
@@ -112,11 +119,6 @@ class EBMModel(AbstractModel):
             )
             self.model.fit(fit_X, fit_y, sample_weight=fit_sample_weight, bags=bags)
 
-    def _get_random_seed_from_hyperparameters(
-        self, hyperparameters: dict
-    ) -> int | None | str:
-        return hyperparameters.get("random_state", "N/A")
-
     def _set_default_params(self):
         default_params = get_param_baseline(problem_type=self.problem_type, num_classes=self.num_classes)
         for param, val in default_params.items():
@@ -124,22 +126,6 @@ class EBMModel(AbstractModel):
 
     def _get_default_searchspace(self):
         return get_default_searchspace(problem_type=self.problem_type, num_classes=self.num_classes)
-
-    def _get_default_auxiliary_params(self) -> dict:
-        default_auxiliary_params = super()._get_default_auxiliary_params()
-        extra_auxiliary_params = {
-            "valid_raw_types": ["int", "float", "category"],
-        }
-        default_auxiliary_params.update(extra_auxiliary_params)
-        return default_auxiliary_params
-
-    @classmethod
-    def supported_problem_types(cls) -> list[str] | None:
-        return ["binary", "multiclass", "regression"]
-
-    @classmethod
-    def _class_tags(cls) -> dict:
-        return {"can_estimate_memory_usage_static": True}
 
     def _more_tags(self) -> dict:
         """EBMs support refit full."""
@@ -179,15 +165,11 @@ class EBMModel(AbstractModel):
         baseline_memory_bytes = 400_000_000  # 400 MB baseline memory
 
         # assuming we call pd.concat([X, X_val], ignore_index=True), then X size will be doubled
-        return baseline_memory_bytes + model_cls(**params).estimate_mem(
-            X, y, data_multiplier=2.0
-        )
+        return baseline_memory_bytes + model_cls(**params).estimate_mem(X, y, data_multiplier=2.0)
 
     def _validate_fit_memory_usage(self, mem_error_threshold: float = 1, **kwargs):
         # Given the good mem estimates with overhead, we set the threshold to 1.
-        return super()._validate_fit_memory_usage(
-            mem_error_threshold=mem_error_threshold, **kwargs
-        )
+        return super()._validate_fit_memory_usage(mem_error_threshold=mem_error_threshold, **kwargs)
 
 
 def construct_ebm_params(
@@ -227,9 +209,7 @@ def construct_ebm_params(
         "feature_types": feature_types,
     }
     if stopping_metric is not None:
-        params["objective"] = get_metric_from_ag_metric(
-            metric=stopping_metric, problem_type=problem_type
-        )
+        params["objective"] = get_metric_from_ag_metric(metric=stopping_metric, problem_type=problem_type)
     if time_limit is not None:
         params["callback"] = EbmCallback(time_limit)
 

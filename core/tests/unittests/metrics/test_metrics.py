@@ -5,7 +5,7 @@ import pytest
 import sklearn
 
 from autogluon.core.constants import BINARY, MULTICLASS, QUANTILE, REGRESSION
-from autogluon.core.metrics import METRICS, Scorer, make_scorer, rmse_func
+from autogluon.core.metrics import METRICS, Scorer, get_metric, make_scorer, rmse_func
 
 METRICS_NEEDS_CLASS = {}
 METRICS_NEEDS_PROBA = {}
@@ -13,7 +13,9 @@ METRICS_NEEDS_THRESHOLD = {}
 NOT_METRICS_NEEDS_THRESHOLD = {}
 for problem_type in METRICS:
     METRICS_NEEDS_CLASS[problem_type] = [k for k, v in METRICS[problem_type].items() if v.needs_class]
-    METRICS_NEEDS_PROBA[problem_type] = [k for k, v in METRICS[problem_type].items() if v.needs_proba or v.needs_threshold]
+    METRICS_NEEDS_PROBA[problem_type] = [
+        k for k, v in METRICS[problem_type].items() if v.needs_proba or v.needs_threshold
+    ]
     METRICS_NEEDS_THRESHOLD[problem_type] = [k for k, v in METRICS[problem_type].items() if v.needs_threshold]
     NOT_METRICS_NEEDS_THRESHOLD[problem_type] = [k for k, v in METRICS[problem_type].items() if not v.needs_threshold]
 
@@ -152,7 +154,9 @@ def test_metrics_perfect_multiclass(metric: str):
     _assert_perfect_score(scorer=METRICS[MULTICLASS][metric])
 
 
-@pytest.mark.skip(reason="average_precision doesn't raise an exception here when it should, so this test currently fails")
+@pytest.mark.skip(
+    reason="average_precision doesn't raise an exception here when it should, so this test currently fails"
+)
 @pytest.mark.parametrize("metric", METRICS_NEEDS_THRESHOLD[BINARY], ids=METRICS_NEEDS_THRESHOLD[BINARY])  # noqa
 def test_metrics_perfect_raises_binary_single_sample(metric: str):
     with pytest.raises(Exception):
@@ -429,3 +433,19 @@ def test_invalid_scorer():
     with pytest.raises(ValueError):
         # Invalid: Specifying needs_pred=True when needs_proba=True
         make_scorer("dummy", score_func=sklearn.metrics.accuracy_score, needs_pred=True, needs_proba=True)
+
+
+def test_get_metric_raw_callable_fails_fast():
+    raw_metric = sklearn.metrics.root_mean_squared_log_error
+    assert not isinstance(raw_metric, Scorer)
+    assert not hasattr(raw_metric, "needs_proba")
+
+    with pytest.raises(ValueError, match="make_scorer"):
+        get_metric(raw_metric, problem_type=REGRESSION, metric_type="eval_metric")
+
+    # Valid: an explicitly wrapped Scorer is still returned unchanged.
+    wrapped = make_scorer("rmsle", score_func=raw_metric, optimum=0, greater_is_better=False)
+    assert get_metric(wrapped, problem_type=REGRESSION, metric_type="eval_metric") is wrapped
+
+    # Valid: `metric=None` means "use the default" and must keep passing through.
+    assert get_metric(None, problem_type=REGRESSION, metric_type="eval_metric") is None

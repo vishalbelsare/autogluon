@@ -1,6 +1,7 @@
 import pytest
 
 from autogluon.common import space
+from autogluon.core.scheduler import seq_scheduler
 from autogluon.core.scheduler.seq_scheduler import LocalSequentialScheduler
 
 cls = LocalSequentialScheduler
@@ -17,32 +18,44 @@ def test_get_average_trial_time_():
 
 def test_has_enough_time_for_trial__enough_time__no_avg_time():
     # Enough time - no average time
-    assert cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=None)
+    assert cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=None
+    )
 
 
 def test_has_enough_time_for_trial__enough_time__avg_time_allows_trials():
     # Enough time - average time allows more trial
-    assert cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=1)
+    assert cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=1
+    )
 
 
 def test_has_enough_time_for_trial__enough_time__avg_time_not_allows_trials():
     # Enough time - average time does not allow more trial
-    assert not cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=5)
+    assert not cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=5
+    )
 
 
 def test_has_enough_time_for_trial__time_exceeded_no_avg_time():
     # Time exceeded - no average time
-    assert not cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=116, avg_trial_run_time=None)
+    assert not cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=116, avg_trial_run_time=None
+    )
 
 
 def test_has_enough_time_for_trial__avg_time():
     # Time exceeded - no average time
-    assert not cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=116, avg_trial_run_time=0)
+    assert not cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=116, avg_trial_run_time=0
+    )
 
 
 def test_has_enough_time_for_trial__enough_time__avg_time_not_allows_trials_by_fill_factor():
     # Enough time - average time does not allow more trial
-    assert not cls.has_enough_time_for_trial_(time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=1, fill_factor=5)
+    assert not cls.has_enough_time_for_trial_(
+        time_out=10, time_start=100, trial_start_time=105, trial_end_time=106, avg_trial_run_time=1, fill_factor=5
+    )
 
 
 def test_LocalSequentialScheduler_no_criteria():
@@ -52,7 +65,9 @@ def test_LocalSequentialScheduler_no_criteria():
         pass
 
     with pytest.raises(AssertionError, match="Need stopping criterion: Either num_trials or time_out"):
-        LocalSequentialScheduler(train_fn=_train_fn_, search_space=search_space, reward_attr="reward_attr", resource={})
+        LocalSequentialScheduler(
+            train_fn=_train_fn_, search_space=search_space, reward_attr="reward_attr", resource={}
+        )
 
 
 def test_search_space():
@@ -126,3 +141,29 @@ def test_scheduler_can_handle_failing_jobs():
     assert trails_outcomes == actual_runs
     assert scheduler.get_best_reward() == best_result[0]
     assert scheduler.get_best_config() == {"a": best_result[0]}
+
+
+@pytest.mark.parametrize("searcher", ["grid", "local_grid"])
+def test_grid_search_stops_quietly_when_the_grid_is_exhausted(searcher, monkeypatch):
+    # The scheduler logs a traceback only when a trial raises an unexpected exception.
+    monkeypatch.setattr(
+        seq_scheduler.logger,
+        "exception",
+        lambda *args, **kwargs: pytest.fail("HPO stopped on an unexpected exception"),
+    )
+    seen = []
+
+    def train_fn(args, reporter):
+        seen.append((args["a"], args["fixed"]))
+        reporter(epoch=1, reward=args["a"])
+
+    scheduler = LocalSequentialScheduler(
+        train_fn,
+        search_space={"a": space.Categorical(1, 2), "fixed": 42},
+        searcher=searcher,
+        num_trials=5,
+        time_attr="epoch",
+    )
+    scheduler.run()
+    scheduler.join_jobs()
+    assert sorted(seen) == [(1, 42), (2, 42)]
